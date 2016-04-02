@@ -7,22 +7,33 @@
 ;-----------------------------------              Data                ----------------------------------- 
 data segment 
  	
-	buffer	            		db 128 	dup('$')	; parse input to buffer
-	argsindex					db 128 	dup('0')	; index of each arg in buffer
-	argctr 						db 49,'$'			; number of arguments
-	nothing 					db 10,13, '$' 
-	arglen						db 0				; length of parsed (with NULLs) arguments 
-	bufferlen					db 0, "$"
+	bufferlen					db 0				; length of PSP buffer
+	flag						db 0				; flag for doing stuff
 
+	buffer	            		db 128 	dup('$')	; parse input to buffer
+	argctr 						db 0,'$'			; number of arguments
+	arglen						db 0, '$'			; length of parsed (with NULLs) arguments (working)
+	
+    argslength					db 128  dup(0)		; length of each argument
+    argument1					db 128  dup('$')	; argument number 1
+    argument2 					db 128  dup('$') 	; argument number 2
+
+
+	newline 					db 10,13, '$' 
  	debug  						db "*$"
- 	flaga						db 0
+ 	tmp							db 0, '$'
 
  	
+
+
+ 	chartable					db 153 dup(0)
+
 	error0 						db "Error 0: no arguments$"
-	error1 						db "Error 1: first argument passed in must be either 0 or 1$"
-	error2 						db "Error 2: second argument must be of length 32$"
-	error3 						db "Error 3: second argument should be a string consisting of a-f letters and 0-9 numbers$"
-	error4 						db "Error 4: invalid number of arguments$"
+	error1						db "Error 1: first argument must be of length 1$"
+	error2 						db "Error 2: first argument passed in must be either 0 or 1$"
+	error3 						db "Error 3: second argument must be of length 32$"
+	error4 						db "Error 4: second argument should be a string consisting of a-f letters and 0-9 numbers$"
+	error5 						db "Error 5: invalid number of arguments$"
 data ends 
  
 
@@ -36,28 +47,35 @@ main:
    	mov ax, seg stack_top 
   	mov ss, ax 
   	mov sp, offset stack_top
-  	
-	call loadtobuffer				; load arguments from buffer
-	;call checknumber				; check if number of args = 2
-	;call buffertoarg				; if number of args is right write to arg1, arg2
 
-    ;print arguments
-	mov dx, offset buffer			
-	call print
-    ;print new line
-    mov dx, offset nothing
-    call print
-    ;print number of arguments
-    mov dx, offset argctr
-    call print
-
-    
-
+  	call parse
     ;end the program end exit to command prompt
     call endsection
 
-;###################################        Procedures section        ################################### 
-loadtobuffer:
+;###################################              Parser              ################################### 
+
+
+parse:
+	call loadtobuffer				; load arguments from buffer
+	call checknumber				; check if number of args = 2
+	call setarglengths
+	call buffertoargs
+	call validateargs
+	;print arguments
+	mov dx, offset buffer			
+	call print
+
+    ;print new line
+    ;mov dx, offset newline
+    ;call print
+    ;print number of arguments
+    ;mov dx, offset argctr
+    ;call print
+ret
+
+
+loadtobuffer:						; load from PSP buffer to var buffer in loop
+
 	push ax
 	push bx
 	push cx
@@ -69,22 +87,29 @@ loadtobuffer:
 	xor cx, cx 						; set cx to 0 for loop
 	mov cl, byte ptr ds:[080h]		; set cl to length of arguments
 	cmp cl, 0d						
-	JE errorhandler0				; if no arguments jump to errorhandler0
+	JNE loadargs					; if no arguments do error0out
 
+	error0out:						
+	mov dx, offset error0
+	call errorhandler
+
+
+	loadargs:						; if there are arguments
 	; input length of args
 	xor bx,bx
 	mov bx, offset bufferlen
 	mov byte ptr es:[bx], cl
 
-	; if there are arguments 
 	mov si, 082h 					; move PSP offset to SI (source index)
 	mov di, offset buffer 			; move buffer offset to DI (destination index)
  	
  	xor dh, dh 						; set dh to 0 for counting arg length
- 	
  	; input loop
+ 	mov al, byte ptr ds:[si]
+ 	cmp al, 21h
+ 	
 	input:		
-		call whitespacedestroyerultra5000		
+		call eatwhitespaces		
 		mov al, byte ptr ds:[si] 	; read byte from source index to al
 		mov byte ptr es:[di], al	; write byte from al to destination index
 		inc dh
@@ -93,112 +118,195 @@ loadtobuffer:
 	loop input 						; cx-=1, jump to input
 
 	mov byte ptr es:[arglen], dh	; set arglen to dh (number of characters written to buffer)
-									; debugging : sets arglen to right value
-	xor dh,dh 
+									; TEST : sets arglen to right value (ok)
 
+	dec di 							; set last arg char to NULL (for next iteration)
+	mov byte ptr es:[di], 0
+
+								
  	pop dx
  	pop cx
  	pop bx
- 	pop ax
+ 	pop ax 			
 ret
-
-whitespacedestroyerultra5000:
+ 	
+eatwhitespaces:						; eat white spaces, insert separator after each argument
 
 	mov al, byte ptr ds:[si]		; load next byte to al 
 
 	cmp al, 09h						; check if space
-	JE skipwhitespaces	
+	JNE checktab
 
-	cmp al, 20h						; check if tab
-	JE skipwhitespaces
-
-	mov ah, es:[flaga]				; check if insert separator
-	cmp ah, 1						; if any whitespaces were skipped
-	JE insert
-ret
-
-skipwhitespaces:					; skipping whitespaces 
+ 	skipwhitespaces:				; skipping whitespaces 
 	inc si 							; si+=1 
 	dec cl 							; loop counter-=1
-	mov byte ptr es:[flaga], 1		; set flag to high
+	mov byte ptr es:[flag], 1		; set flag to high
+	JMP eatwhitespaces
+	
+	checktab:
+	cmp al, 20h						; check if tab
+	JNE separator
 
-	call whitespacedestroyerultra5000
-ret
+	skipwhitespaces2:				; skipping whitespaces 
+	inc si 							; si+=1 
+	dec cl 							; loop counter-=1
+	mov byte ptr es:[flag], 1		; set flag to high
+	JMP eatwhitespaces
 
+ 	separator:
+	mov ah, es:[flag]				; check if insert separator
+	cmp ah, 1						; if any whitespaces were skipped
+	JNE noinsert
 
-insert:								; insert separator to argstring, also counts arguments
-	cmp di, 0 						; if insert to first buffer character
+	insert:							; insert separator to argstring, also counts arguments
+	cmp di, offset buffer			; if insert to first buffer character
 	JE noinsert
 
 	;########### inserting NULL 	;
-	;mov byte ptr es:[di], 0		; set next character to NULL
-	;inc es:[argctr]				; increment argument counter
-	;inc di 						; set di to next character
- 	;inc dh							; in dh we store length of parsed arguments
+	mov byte ptr es:[di], 0		    ; set next character to NULL
+	inc es:[argctr]					; increment argument counter
+	inc di 							; set di to next character
+ 	inc dh							; in dh we store length of parsed arguments
 	;########### /inserting NULL
-
-	; printing new line
-	mov byte ptr es:[di], 10		; set next char to new line
-	inc es:[argctr] 				; increment argument counter
-	inc di 							; set di to next char
-	inc dh 							; increment length of parsed arguments
-	mov byte ptr es:[di], 13 		; set next char to carriage return
-	inc di 							; set di to next char
-	inc dh  						; increment length of parsed arguments
-    ; added printing new line
-
+	
 	noinsert:						;	
 	xor ah,ah 						; set ah to 0
-	mov byte ptr es:[flaga],0  		; flag=0
-ret 
+	mov byte ptr es:[flag], 0  		; flag=0	
+ret
 
-checknumber:						; 
+checknumber:						; check number of aruments
+
 	push ax
 	mov ax, seg data
 	mov ds, ax
-	cmp ds:[argctr], 50
-	JNE errorhandler4
+	cmp ds:[argctr], 1				; by default argctr==0 and it is incremented when inserting separator, thus argctr==arg number-1
+	JE rightnumber
+
+	error5out:
+	mov dx, offset error5
+	call errorhandler
+
+	rightnumber:					; if number of args == 2, return
 	pop ax
 ret
 
-buffertoarg:
+setarglengths:						; fills argslength[] tab, checks for length errors
+	
+	push ax
+	push cx
+
+	mov ax, seg data
+	mov ds, ax
+
+	xor ax, ax 						; ax=0
+	xor si, si
+	mov si, offset buffer 			; set si (source index) to first character of parsed arguments
+	xor di, di 						; set di (destination index) to 0
+	xor cx, cx 						; cx=0
+	mov cl, byte ptr ds:[arglen]	; now cl = length of parsed arguments
+
+	stlen: 							; loop for writing to argslength[] tab
+		mov al, byte ptr ds:[si]	; load next character to al
+		cmp al, 0 					; check if al==NULL
+		JE isnull
+
+		inc ds:[argslength+di] 		; current arg length ++
+		JMP notnull
+
+		isnull:						; if current char is null
+		inc di 						; edit next (argslength[di]) length
+
+		notnull:					; current character is not null
+		inc si 						; si+=1, point to next char
+	loop stlen
+
+	call checkarglen 					; check length of arguments 
+
+	pop cx
+	pop ax
+ret
+
+checkarglen:						; upgrade - store proper lengths in one tab, store error offsets in another tab for faster validation
+
+	xor ax, ax
+	mov al, byte ptr ds:[argslength] 
+	cmp al, 1						; check length of first argument	
+	JNE error1out 					
+
+	mov al, byte ptr ds:[argslength+1]  
+	cmp al, 10						; check length of second argument
+	JNE error3out					; if argslength[1]!=32 then print error3 and exit to command prompt
+
+	JMP noerrors					; if lengths are right
+
+	error1out:
+	mov dx, offset error1
+	call errorhandler
+
+	error3out:
+	mov dx, offset error3
+	call errorhandler
+
+	noerrors:
+ret
+
+buffertoargs: 					 	; upgrade - store offsets of args in buffer in a tab
+
 	push ax
 	push bx
-	push cx
 	push dx
 
+	mov ax, seg data
+	mov ds, ax
+
+	xor bx, bx						; bx=0 
+	mov bx, offset argument1		; bx points to argument1, for writing from buffer to argument1
+	mov al, byte ptr ds:[argslength]; store in al length of arg1
+	mov si, 0 						; start index of arg1 in buffer
+	call toarg 						
+
+	xor bx, bx 						; bx=0
+	mov bx, offset argument2 		; bx points to argument2, for writing from buffer to argument2
+	mov al, byte ptr ds:[argslength+1]; store in al length of arg2
+	xor dx, dx 						; prepare si for arg2
+	add dl, byte ptr ds:[argslength]; si=len(arg1)+1
+	inc dl
+	xor si, si
+	add si, dx
+	call toarg
 
 	pop dx
-	pop cx
 	pop bx
 	pop ax
 ret
 
+toarg: 								; bx - offset to argument#nr, al - length of argument, si - number of chars before argument in buffer
+	
+	push cx 						
+	xor cx, cx 					 	; cx=0
+	mov cl, al  					; set counter to length of argument
+	xor al, al
+
+	writetoarg:						; write from buffer to argument#nr
+		mov al, byte ptr ds:[buffer+si]
+		mov byte ptr ds:[bx], al
+		inc si 						; now si is pointing to next char from buffer
+		inc bx 						; now bx is pointing to next char in argument#nr
+	loop writetoarg
+	pop cx
+ret
+
+validateargs:
+	push ax
+
+	pop ax
+ret
 
 
 ;###################################          Error handling          ################################### 
-errorhandler0:
-	mov dx, offset error0
-	call print
-	call endsection
-ret
-errorhandler1:
-	mov dx, offset error1
-	call print
-	call endsection
-ret
-errorhandler2:
-	mov dx, offset error2
-	call print
-	call endsection
-ret
-errorhandler3:
-	mov dx, offset error3
-	call print
-	call endsection
-ret
-errorhandler4:
-	mov dx, offset error4
+
+errorhandler: 						; args - error offset in dx
+
 	call print
 	call endsection
 ret
