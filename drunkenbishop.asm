@@ -26,7 +26,6 @@ data segment
 	newline 					db 10,13, '$' 
  	debug  						db "*$"
  	tmp							db 0, '$'
- 	horray						db "Doing some mods$"
  	;/debugging args
  	
  	; drunken bishop section
@@ -47,9 +46,6 @@ data segment
 	;/errors
 data ends 
  
-
-
-
 ;-----------------------------------              Code                ----------------------------------- 
 code1 segment 
 
@@ -62,11 +58,9 @@ main:
   	call parse
   	call drunkenbishop
    
-   	 ;end the program end exit to command prompt
     call endsection
 
 ;###################################              Parser              ################################### 
-
 
 parse: 								; parse arguments, calls proper procedures
 
@@ -98,9 +92,8 @@ loadtobuffer:						; load from PSP buffer to var buffer in loop
 
 
 	loadargs:						; if there are arguments
-	; input length of args
 	xor bx,bx
-	mov bx, offset bufferlen
+	mov bx, offset bufferlen		; input length of args
 	mov byte ptr es:[bx], cl
 
 	mov si, 082h 					; move PSP offset to SI (source index)
@@ -109,8 +102,6 @@ loadtobuffer:						; load from PSP buffer to var buffer in loop
  	xor dh, dh 						; set dh to 0 for counting arg length
  	; input loop
  	mov al, byte ptr ds:[si]
- 	cmp al, 21h
- 	
 	input:		
 		call eatwhitespaces		
 		mov al, byte ptr ds:[si] 	; read byte from source index to al
@@ -165,12 +156,12 @@ eatwhitespaces:						; eat white spaces, insert separator after each argument
 	cmp di, offset buffer			; if insert to first buffer character
 	JE noinsert
 
-	;########### inserting NULL 	;
+									;########### inserting NULL 
 	mov byte ptr es:[di], 0		    ; set next character to NULL
 	inc es:[argctr]					; increment argument counter
 	inc di 							; set di to next character
  	inc dh							; in dh we store length of parsed arguments
-	;########### /inserting NULL
+									;########### /inserting NULL
 	
 	noinsert:						;	
 	xor ah,ah 						; set ah to 0
@@ -303,6 +294,7 @@ validateargs: 						; check if args consist of legal characters
 
 	push ax
 	push cx
+	push si
 
 	mov ax, seg data
 	mov ds, ax
@@ -338,7 +330,7 @@ validateargs: 						; check if args consist of legal characters
 	call errorhandler
 
 	noerrors2:
-
+	pop si
 	pop cx
 	pop ax
 ret
@@ -347,6 +339,7 @@ testchar:							; check if character is in legalchars tab
 
 	push cx 					 	; push cx, i will be using it for next loop
 	push dx 
+	push di
 
 	xor ah, ah
 	xor cx, cx
@@ -365,6 +358,7 @@ testchar:							; check if character is in legalchars tab
 	mov ah, 1
 
 	nocharfound:
+	pop di
 	pop dx
 	pop cx
 ret
@@ -385,6 +379,8 @@ arg2tobytes: 						; translate hexadecimal bytes to binary
 	push dx
 	push cx
 	push ax
+	push si
+	push di
 
 	xor ax, ax
 	mov ax, seg data
@@ -404,12 +400,14 @@ arg2tobytes: 						; translate hexadecimal bytes to binary
 		add si, 2					; si+=2 - si is pointing to next pair of chars
 	loop charstobyte
 
+	pop di
+	pop si
 	pop ax
 	pop cx
 	pop dx
 ret
 
-asciitobyte:						; translate two ascii chars to a byte, return byte in dl, confirmed working
+asciitobyte:						; translate two ascii chars to a byte, chars passed in ax, return byte in dl, confirmed working
 
 	push cx 						; cx used for shifting to right half of byte
 	xor dl, dl 						; return result in dl
@@ -452,6 +450,9 @@ modification:						; check if make modified asciiart, and prepare bytesequence0 
 
 	push ax
 	push cx
+	push si
+	push di
+
 	xor ax, ax
 	mov ax, seg data
 	mov ds, ax
@@ -498,6 +499,8 @@ modification:						; check if make modified asciiart, and prepare bytesequence0 
 
 
 	nomod:
+	pop di
+	pop si
 	pop cx
 	pop ax
 ret
@@ -511,11 +514,9 @@ makeallmoves: 						; return in dx position after all moves
 	mov ds, ax
 	xor ax, ax
 
- 	; in dx return position after all moves, by default - center (76)
 	xor dx, dx
-	mov dx, 76
-	; loop over 16 bytes of bytesequence0
-	mov cx, 16
+	mov dx, 76							; in dx return position after all moves, by default - center (76)
+	mov cx, 16							; loop over 16 bytes of bytesequence0
 	mov bx, offset bytesequence0
 	makemoves:
 		mov al, byte ptr ds:[bx]
@@ -564,12 +565,12 @@ makemovesbyte:						; input - byte in al, store in dx position after moves
 		call moveright
 		JMP continue
 
-		continue:
+		continue: 					; shift byte 2 bits right
 		push cx
 		mov cl, 2
-		shr al, cl
+		shr al, cl 
 		pop cx
-	loop makemove
+	loop makemove 					
 
 	pop cx
 	pop bx
@@ -641,6 +642,7 @@ makefingerprint:					; for arg takes dx - last position of bishop, makes the fin
 	push ax
 	push bx
 	push cx
+	push di
 
 	mov ax, seg data
 	mov ds, ax
@@ -664,7 +666,7 @@ makefingerprint:					; for arg takes dx - last position of bishop, makes the fin
 		changeE:
 		mov byte ptr ds:[bx+di], 'E'
 		JMP nextchar
-		
+
 		otherchars:
 		mov al, byte ptr ds:[bx+di]
 		cmp al, 0
@@ -678,6 +680,7 @@ makefingerprint:					; for arg takes dx - last position of bishop, makes the fin
 		
 		dash:
 		mov byte ptr ds:[bx+di], '^'
+		JMP nextchar
 
 		space:
 		mov byte ptr ds:[bx+di], ' '
@@ -687,7 +690,7 @@ makefingerprint:					; for arg takes dx - last position of bishop, makes the fin
 		inc di
 	loop makefp
 
-
+	pop di
 	pop cx
 	pop bx
 	pop ax
@@ -791,23 +794,24 @@ printfingerprint:					; print ascii art of fingerprint
 
 	mov cx, 9						; load to cx 9 (9 rows)
 	print_rows:
-		push cx						; push cx to stack, i will be using cx to print 17 chars in each row
 
+		push cx						; push cx to stack, i will be using cx to print 17 chars in each row
+	
 		mov dl, '|' 				; print element of frame
 		mov ah, 6 
 		int 21h 
-			
+		
 		mov cx, 17					; load to cx 17 (for 17 columns/chars in row)
 		print_element:
 			mov dl, byte ptr ds:[di]
-			mov ah, 6 				; print char at di offset
+			mov ah, 6h 				; print char at di offset
 			int 21h
 				
 			inc di					; di+=1, for printing next char
 		loop print_element
 				
 		mov dl, '|' 				; print element of frame
-		mov ah, 6 
+		mov ah, 6h 
 		int 21h
 			
 		mov dx, offset newline 		; print new line
@@ -816,7 +820,7 @@ printfingerprint:					; print ascii art of fingerprint
 		pop cx 						; pop cx for outer loop
 	loop print_rows
 		
-	mov dx, offset bottomframe													;na zakończenie jeszcze drukujemy dolną ramkę
+	mov dx, offset bottomframe		; print bottom frame
 	call print
 
 	pop di	
@@ -826,10 +830,6 @@ printfingerprint:					; print ascii art of fingerprint
 	pop bx
 ret
 
-
-
-
-
 ;###################################          Error handling          ################################### 
 
 errorhandler: 						; args - error offset in dx
@@ -838,9 +838,7 @@ errorhandler: 						; args - error offset in dx
 	call endsection
 ret
 
-
 ;###################################          Print and exit          ################################### 
-
 
 print: 								;print variable from data segment
 	mov ax, seg data 				
@@ -855,7 +853,6 @@ endsection:							; end
 ret
  
 code1 ends			
-
 
 ;-----------------------------------              Stack               ----------------------------------- 
 stos1 segment stack 
